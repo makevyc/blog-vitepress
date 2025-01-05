@@ -203,6 +203,10 @@ libcuda.so 库劫持逻辑，好多 API 其实没实现劫持方案，只是打�
 # HAMi
 https://github.com/Project-HAMi/HAMi
 
+update: 2025-01-05: cbccbd469c636870655dff5f6d2707e206d00a02，更新了 nvidia MIG 和 Metax GPU，加了一些 UT 和文档，特别是有个 [脑图](https://github.com/Project-HAMi/HAMi/blob/master/docs/mind-map/HAMI-VGPU-mind-map-Chinese.png) 画得很好。
+
+下面的代码基于 66cabbfac0aebd4ccf19a2d0850c1a2d682b3159
+
 HAMI-core 中的劫持库，会被编译成 libvgpu.so，通过挂载 ld.so.preload 文件的方式注入到容器里面做 cuda/nvml 劫持。
 
 ## cmd/vGPUmonitor/
@@ -402,7 +406,7 @@ type Interface interface {
 
 #### server.go
 
-定义了类型 `NvidiaDevicePlugin`，实现 DP 的标准服务接口
+定义了类型 `NvidiaDevicePlugin`，实现下面的 DP 的标准服务接口。
 
 ```
 service DevicePlugin {
@@ -433,8 +437,18 @@ service DevicePlugin {
 }
 ```
 
+`cmd/device-plugin/nvidia/main.go` 通过它的 `NvidiaDevicePlugin.Start()` 函数拉起 DP 服务 `NvidiaDevicePlugin.Serve()`，通过 `NvidiaDevicePlugin.Register()` 注册自身到 kubelet，然后开启一个线程调用 `ResourceManager.CheckHealth()` 持续做健康检查，一个线程调用 `NvidiaDevicePlugin.WatchAndRegister()` 定期更新节点设备信息。
+
+`NvidiaDevicePlugin.Serve()` 就是启动了一个 uds server，提供上面的 `DevicePlugin` service。
+
+`DevicePlugin.PreStartContainer()` 和 `DevicePlugin.GetPreferredAllocation()` 都是空实现，`DevicePlugin.ListAndWatch()` 在设备有健康状态变化的时候，返回 `ResourceManager.Devices().GetPluginDevices()` 的结果。
+
+`DevicePlugin.Allocate()` 先调用 `util.GetNextDeviceRequest()` 从 pending 状态的 Pod 中找到需要 GPU 设备的容器；调用 `NvidiaDevicePlugin.getAllocateResponse()` ，其中根据 `NvidiaDevicePlugin.deviceIDsFromAnnotatedDeviceIDs()` 根据请求信息中的设备获取符合 CDI 规范的设备 ID，然后在 `NvidiaDevicePlugin.getAllocateResponseForCDI()` 中进一步根据 CDI 规范，修改响应的格式以触发 CDI；然后修改容器的环境变量和 mount，在这里配置 vgpu/HAMi-core（这里一些操作不可以放到 `DevicePlugin.PreStartContainer()` 里面吗）。
+
+
 #### register.go
 
+DP 的 grpc 服务器启动后，会单独启动一个线程调用该文件内的 `WatchAndRegister()`，定期获取节点侧设备信息，更新到节点的 annotation 中。
 
 #### manager
 
@@ -496,7 +510,7 @@ type ResourceManager interface {
 其中一个集成了 https://github.com/NVIDIA/go-gpuallocator/ 中的 GPU 分配器，它会借助 nvml 识别拓扑关系，按预定的策略选择合适的 GPU 设备，`resourceManager.alignedAlloc()`。
 另一个则是考虑了过往的分配情况，尽可能均匀地完成分配，`resourceManager.distributedAlloc()`。
 
-#### device.go
+#### devices.go
 
 `Device` 类包装 k8s 的 DP 中对设备的抽象，即 k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1 中的 `Device`。提供了一组公共的接口
 
@@ -507,6 +521,8 @@ type deviceInfo interface {
     GetNumaNode() (bool, int, error)
 }
 ```
+
+`Devices.GetPluginDevices()` 会被 DP 的 `ListAndWatch()` 接口使用。
 
 #### device_map.go
 

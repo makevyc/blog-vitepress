@@ -57,7 +57,7 @@ jobs:
           API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
           source-directory: "blog/.vitepress/dist"
-          destination-github-username: "Forsworns"
-          destination-repository-name: "Forsworns.github.io"
+          destination-github-username: "makevyc"
+          destination-repository-name: "makevyc.github.io"
           user-email: ${{ secrets.MAIL }}
-          target-branch: master
+          target-branch: main
